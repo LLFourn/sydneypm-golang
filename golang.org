@@ -1,0 +1,370 @@
+* GO-LANG
+
+This is going to be a what I'd wish someone had told me before starting to use golang style talk.
+
+There are many great things about go, but you'll figure them out when you use it.
+
+I'll mostly focus on what may confuse you starting out as a Perl programmer / human
+
+** What is it
+Low level language that:
+
+***  Is a lot like C
+
+- Statically typed
+- structs, pointers
+- Produces standalone binaries
+
+
+*** Has a runtime
+
+- Memory management
+- Thread scheduling
+- Probably other stuff
+
+*** Emphasis
+
+- Simplicity (There's only one way to do it 💩)
+- Correctness at compile time
+- Platform independence
+- Concurrency and Parallelism
+- Easy packaging and distribution
+- Minimize ways to shoot yourself in the foot
+
+* classless methods
+  Go doesn't have object orientation per se. It has some syntactic
+  sugar to make function calls look like method calls.
+
+     #+begin_src go :imports "fmt"
+       type User struct {
+               Name string
+       }
+
+       // Won't work...
+       func  changeUserName(user User, newName string) {
+               user.Name = newName
+       }
+
+       func main() {
+               user := User{Name: "Fred"}
+               fmt.Println(user.Name)
+               changeUserName(user, "FredMeister")
+               fmt.Println(user.Name)
+       }
+   #+end_src
+
+   #+begin_src go :imports "fmt"
+     type User struct {
+             Name string
+     }
+
+     func main() {
+             user := User{Name: "Fred"}
+             fmt.Println(user.Name)
+             user.changeName("FredMeister")
+             fmt.Println(user.Name)
+     }
+
+     func (user User) changeName(newName string) {
+             user.Name = newName
+     }
+   #+end_src
+
+* Inheritance?
+
+  No. But you can set up "has a" relationships easily.
+
+  #+BEGIN_SRC go :imports "fmt"
+    type Parent struct {
+            Foo string
+    }
+
+    type Child struct {
+            Parent // <--- the magic
+            Bar string
+    }
+
+    func (p Parent) parentMethod() {
+            fmt.Println("parent method")
+    }
+
+    func main() {
+            child := Child{ Parent: Parent{ Foo: "foo" }, Bar: "bar",}
+            fmt.Println(child.Parent)
+            fmt.Println(child.Foo)
+            child.parentMethod()
+    }
+  #+END_SRC
+
+
+  It's like Perl6/Moose "handles"
+
+  #+BEGIN_SRC perl6
+    class Parent {
+        has Str $.foo;
+        method parentMethod { say "parent method" }
+    }
+    class Child {
+        has Parent $.parent handles Parent;
+        has Str $.bar;
+    }
+
+    my $child = Child.new( parent => Parent.new(foo => "foo") );
+    say $child.parent;
+    say $child.foo;
+    $child.parentMethod();
+  #+END_SRC
+
+* Interfaces
+  Runtime method dispatch, ie "polymorphism".
+
+  #+BEGIN_SRC go :imports "fmt"
+    type Shape interface {
+            area() float64
+    }
+
+    type Rectangle struct {
+            height float64
+            width  float64
+    }
+
+    func (r Rectangle) area() float64 {
+            return r.height * r.width
+    }
+
+    type Square float64
+
+    func (s Square) area() float64 {
+            return float64(s * s)
+    }
+
+    func main(){
+            r := Rectangle{ height: 2.0, width: 4.0}
+            s := Square(3.0)
+
+            shapes := []Shape{r, s}
+
+            for _, shape := range shapes {
+                    fmt.Println(shape.area())
+            }
+
+    }
+  #+END_SRC
+
+
+** What is an interface
+
+An interface is a meta-type. When methods are called on it, it will
+look up which function to call in a jump table.
+
+#+BEGIN_SRC go :imports "fmt"
+  type Shape interface {
+          area() float64
+  }
+
+  type Square float64
+
+  func (s Square) area() float64 {
+          return float64(s * s)
+  }
+
+  func areaSquared(s Shape) float64 {
+          return s.area() * s.area()
+  }
+
+  func main(){
+          s := Square(3.0)
+          fmt.Println(areaSquared(s))
+  }
+#+END_SRC
+
+* Concurrency
+
+The biggest selling point of Go is its concurrency constructs. Instead
+of making threads to do things in parallel, you just declare which
+things can be done concurrently and the scheduler decides how many
+things to run in parallel.
+
+(same as rakudo)
+
+#+BEGIN_SRC go :imports '("fmt" "time")
+func main() {
+    ticker := time.NewTicker(time.Second)
+    go func() {
+        for t := range ticker.C {
+            fmt.Println("Tick at", t)
+        }
+    }()
+    time.Sleep(time.Second * 5)
+    ticker.Stop()
+    fmt.Println("Ticker stopped")
+}
+#+END_SRC
+
+#+BEGIN_SRC perl6
+  my $tap = Supply.interval(1).tap: {
+     say "Tick at {now.DateTime}";
+  };
+
+  sleep 5;
+  $tap.close();
+  say "Tap stopped";
+#+END_SRC
+
+* The Ugly
+
+** Interfaces
+
+A slice of Squares is not a slice of Shapes.
+
+
+#+BEGIN_SRC go :imports "fmt"
+  type Shape interface {
+          area() float64
+  }
+
+  type Square float64
+
+  func (s Square) area() float64 {
+          return float64(s * s)
+  }
+
+  func avgArea(shapes []Shape) float64 {
+          total := 0.0
+          for _, s := range shapes {
+                  total += s.area()
+          }
+          return total/float64(len(shapes))
+  }
+
+  func main(){
+          s1 := Square(3.0)
+          s2 := Square(4.0)
+          squares := []Square{s1,s2}
+          // a := avgArea(squares) // NOPE!
+          // You have to do this:
+          shapes := make([]Shape, len(squares))
+          for i, square := range squares {
+                   shapes[i] = square
+          }
+          fmt.Println(avgArea(shapes))
+
+  }
+#+END_SRC
+
+** Boilerplate galore
+
+Let's say as part of an API you have to deal with they want you to
+pass in an object with certain methods that the library/framework will
+call at when something happens.
+
+#+BEGIN_SRC go
+  type OnCollision struct {
+          beginContact func(B2ContactInterface)
+          endContact   func(B2ContactInterface)
+          preSolve     func(B2ContactInterface, B2Manifold)
+          postSolve    func(B2ContactInterface, *B2ContactImpulse)
+  }
+
+  func (c OnCollision) BeginContact(contact B2ContactInterface) {
+          c.beginContact(contact)
+  }
+
+  func (c OnCollision) EndContact(contact B2ContactInterface) {
+          c.endContact(contact)
+  }
+
+  func (c OnCollision) PreSolve(contact B2ContactInterface, manifold B2Manifold) {
+          c.preSolve(contact, manifold)
+  }
+
+  func (c OnCollision) PostSolve(contact B2ContactInterface, impulse *B2ContactImpulse) {
+          c.postSolve(contact, impulse)
+  }
+
+  func main() {
+          //....
+          //requires a 'B2ContactListenerInterface'
+          a := "foo"
+          world.SetContactListener(OnCollision{
+                  beginContact: func(B2ContactInterface) { fmt.Println(a)},
+                  endContact:   func(B2ContactInterface) {},
+                  preSolve:     func(B2ContactInterface, B2Manifold) {},
+                  postSolve: func(contact B2ContactInterface, impulse *B2ContactImpulse) {},
+          })
+  }
+#+END_SRC
+
+#+BEGIN_SRC perl6
+  sub MAIN(){
+      my $a = "foo";
+      $world.set_contact_listener: class :: does B2ContactListener {
+          method BeginContact($contact) { say $a }
+          method EndContact($contact) { }
+          method PreSolve($contact, $manifold) { }
+          method PostSOlve($contact, $impulse) { }
+      }
+  }
+#+END_SRC
+
+*** Re: [go-nuts] Language feature proposal: Anonymous interface implementation
+
+**** Go guy
+How would this improve the readability of Go programs ? At first blush
+there is now another way to satisfy an interface, and that sounds like
+a step backwards.
+
+**** Author
+From my point of view, the above code is very easy to read. All implementation of the Interface are well organized together.
+
+**** Go guy
+You missed the point of my comment. Your proposal adds an additional
+way that types that satisfy an interface can be defined. This is an
+overall negative for readability in my opinion.
+
+** No static methods
+
+You can't create constructor methods that do anything. If you need to
+do any initialisation you have to make a function:
+
+
+#+BEGIN_SRC go :imports "fmt"
+  type MyObj struct {
+          Timezone string
+  }
+
+  func newMyObj() MyObj {
+      return MyObj{Timezone: "Sydney/Australia"}
+  }
+
+  func main(){
+      myobj := newMyObj()
+      fmt.Println(myobj.Timezone)
+  }
+#+END_SRC
+
+Wouldn't you love to do:
+
+#+BEGIN_SRC go :imports "fmt"
+  type MyObj struct {
+          Timezone string
+  }
+  // or some other syntax to make it static
+  func (MyObj) new() MyObj {
+          return MyObj{Timezone: "Sydney/Australia"}
+  }
+
+  func main(){
+          myobj := MyObj.new()
+          fmt.Println(myobj.Timezone)
+  }
+
+#+END_SRC
+
+*** Re: [go-nuts] Re: Static methods (3/2/11)
+    > some_fun() would be implemented as an ordinary method
+    > for the type (with the value of the receiver simply discarded)
+    Why having a receiver if you are going to discard it? What would be
+    the advantage of using a T.New() method instead of a NewT() function?
+
+* When should you use Go
